@@ -1233,43 +1233,6 @@ const CommandLine = Module("commandline", {
 
         preview: function preview() {
             this.previewClear();
-            if (this.wildIndex < 0 || this.suffix || !this.items.length)
-                return;
-
-            let substring = "";
-            switch (this.wildtype.replace(/.*:/, "")) {
-            case "":
-                substring = this.items[0].text;
-                break;
-            case "longest":
-                if (this.items.length > 1) {
-                    substring = this.substring;
-                    break;
-                }
-                // Fallthrough
-            case "full":
-                let item = this.items[this.selected != null ? this.selected + 1 : 0];
-                if (item)
-                    substring = item.text;
-                break;
-            }
-
-            // Don't show 1-character substrings unless we've just hit backspace
-            if (substring.length < 2 && (!this._lastSubstring || !this._lastSubstring.startsWith(substring)))
-                return;
-            this._lastSubstring = substring;
-
-            let value = this.completion;
-            if (util.compareIgnoreCase(value, substring.substr(0, value.length)))
-                return;
-            substring = substring.substr(value.length);
-            this.removeSubstring = substring;
-
-            let node = util.xmlToDom(xml`<span highlight="Preview">${substring}</span>`,
-                document);
-            let start = this.caret;
-            this.editor.insertNode(node, this.editor.rootElement, 1);
-            this.caret = start;
         },
 
         previewClear: function previewClear() {
