@@ -1445,7 +1445,7 @@ const Buffer = Module("buffer", {
                 context.completions = [item for (item in generateTabs(tabs || config.tabbrowser.visibleTabs))];
             }
 
-            if (!liberator.has("tabgroup"))
+            if (!liberator.has("tabgroup") || !tabGroup.TV)
                 return;
 
             let groups = tabGroup.tabView.GroupItems;
@@ -1814,6 +1814,9 @@ const Buffer = Module("buffer", {
 });
 
 /* Expose Buffer constructor */
-Object.defineProperty(this, "Buffer", { value: Buffer });
+Object.defineProperty(modules, "Buffer", {
+    value: Buffer,
+    enumerable: true
+});
 
 // vim: set fdm=marker sw=4 ts=4 et:

@@ -87,6 +87,7 @@ var Finder = Module("finder", {
         pattern = pattern.replace(/\\(\\[cClL])/g, "$1");
 
         findbar._findField.value = pattern;
+        this._lastSearchPattern = pattern;
     },
 
     /**
@@ -100,7 +101,11 @@ var Finder = Module("finder", {
         this._backwards = mode == modes.SEARCH_BACKWARD;
         //commandline.open(this._backwards ? "Find backwards" : "Find", "", mode);
         commandline.input(this._backwards ? "Find backwards" : "Find", this.closure.onSubmit, {
-            onChange: function() { if (options["incsearch"]) finder.find(commandline.command) }
+            onChange: function() {
+                if (options["incsearch"] && !commandline._isIMEComposing) {
+                    finder.find(commandline.command);
+                }
+            }
         });
         //modes.extended = mode;
 
@@ -108,13 +113,9 @@ var Finder = Module("finder", {
     },
 
     /**
-     * Searches the current buffer for <b>str</b>.
-     *
-     * @param {string} str The string to find.
+     * Initialize some of the findbar's methods to play nice us.
      */
-    find: function (str) {
-        this._processUserPattern(str);
-
+    setupFindbar: function() {
         let findbar = this.findbar;
         if (!findbar.vimperated) {
             findbar.vimperated = true;
@@ -124,18 +125,40 @@ var Finder = Module("finder", {
 
             // PDF.JS files are different, they use their own messages to communicate the results.
             // So we piggyback the end changes to the findbar when there are any.
-            findbar._original_updateControlState = findbar.updateControlState;
+            findbar._vimpbackup_updateControlState = findbar.updateControlState;
             findbar.updateControlState = function(aResult, aFindPrevious) {
-                this._original_updateControlState(aResult, aFindPrevious);
+                this._vimpbackup_updateControlState(aResult, aFindPrevious);
                 finder.onFindResult({
                     searchString: this._findField.value,
                     result: aResult,
                     findBackwards: aFindPrevious
                 });
             };
-        }
 
-        findbar._find();
+            // Normally the findbar appears to notify on failed results.
+            // However, this shouldn't happen when we're finding through the command line,
+            // even though that way we lose any kind of no matches notification until we
+            // stop typing altogether; something to work on at a later time:
+            // - show the quick findbar which will hide after a few seconds?
+            // - or notify the user somehow in the command line itself?
+            findbar._vimpbackup_open = findbar.open;
+            findbar.open = function (aMode) {
+                if (commandline._keepOpenForInput || this._vimp_keepClosed) { return false; }
+                return this._vimpbackup_open(aMode);
+            };
+        }
+    },
+
+    /**
+     * Searches the current buffer for <b>str</b>.
+     *
+     * @param {string} str The string to find.
+     */
+    find: function (str) {
+        this.setupFindbar();
+        this._processUserPattern(str);
+
+        this.findbar._find();
     },
 
     /**
@@ -144,12 +167,18 @@ var Finder = Module("finder", {
      *
      * @param {boolean} reverse Whether to search forwards or backwards.
      * @default false
-     * @see Bug537013 https://bugzilla.mozilla.org/show_bug.cgi?id=537013
      */
     findAgain: function (reverse) {
         // Nothing to find?
-        if (!this.findbarInitialized || !this.findbar._findField.value)
+        if (!this._lastSearchPattern)
             return;
+
+        this.setupFindbar();
+        if (this._lastSearchPattern != this.findbar._findField.value)
+	    this._processUserPattern(this._searchPattern);
+
+        // We don't want to show the findbar on failed searches when using the commandline.
+        this.findbar._vimp_keepClosed = true;
 
         this.findbar.onFindAgainCommand(reverse);
     },
@@ -159,8 +188,14 @@ var Finder = Module("finder", {
      * this is done aSync from the main (input) process.
      */
     onFindResult: function(aData) {
+        this.findbar._vimp_keepClosed = false;
         if (aData.result == Ci.nsITypeAheadFind.FIND_NOTFOUND) {
-            liberator.echoerr("Pattern not found: " + aData.searchString, commandline.FORCE_SINGLELINE);
+            // Don't use aData.searchString, it may be a substring of the
+            // user's actual input text and that can be confusing.
+            // See https://github.com/vimperator/vimperator-labs/issues/401#issuecomment-180522987
+            // for an example.
+            let searchString = this.findbar._findField.value;
+            liberator.echoerr("Pattern not found: " + searchString, commandline.FORCE_SINGLELINE);
         }
         else if (aData.result == Ci.nsITypeAheadFind.FIND_WRAPPED) {
             let msg = aData.findBackwards ? "Search hit TOP, continuing at BOTTOM" : "Search hit BOTTOM, continuing at TOP";
@@ -199,7 +234,14 @@ var Finder = Module("finder", {
             this.find(pattern);
         }
 
-        this._lastSearchPattern = pattern;
+        // It won't send a message to find in this case, as it will assume the searched word doesn't exist,
+        // so our onFindResult listener won't be triggered. Simulate it here.
+        if (findbar._findFailedString && this._lastSearchPattern.startsWith(findbar._findFailedString)) {
+            this.onFindResult({ result: Ci.nsITypeAheadFind.FIND_NOTFOUND });
+
+            // There's also no point in continuing if there are no matches.
+            return;
+        }
 
         // TODO: move to find() when reverse incremental searching is kludged in
         // need to find again for reverse searching
@@ -207,15 +249,14 @@ var Finder = Module("finder", {
             this.findAgain(true);
 
         if (options["hlsearch"])
-            this.highlight(findbar._findField.value);
+            this.highlight();
     },
 
     /**
      * Highlights all occurances of <b>str</b> in the buffer.
-     *
-     * @param {string} str The string to highlight.
      */
-    highlight: function (str) {
+    highlight: function () {
+        this.setupFindbar();
         let findbar = this.findbar;
 
         let btn = findbar.getElement("highlight");
@@ -231,6 +272,7 @@ var Finder = Module("finder", {
         if (!this.findbarInitialized)
             return;
 
+        this.setupFindbar();
         let findbar = this.findbar;
 
         let btn = findbar.getElement("highlight");
@@ -243,6 +285,7 @@ var Finder = Module("finder", {
      * Updates the case sensitivity parameter.
      */
     updateCaseSensitive: function (cs) {
+        this.setupFindbar();
         let findbar = this.findbar;
         if (cs != findbar._typeAheadCaseSensitive) {
             findbar._setCaseSensitivity(cs);
@@ -253,6 +296,7 @@ var Finder = Module("finder", {
      * Updates the find mode to show only matches in links or all matches.
      */
     updateFindMode: function (fm) {
+        this.setupFindbar();
         let findbar = this.findbar;
 
         // We need to pretend like we're opening the findbar with a different mode,
