@@ -62,34 +62,34 @@ const Editor = Module("editor", {
         return text.substring(e.selectionStart, e.selectionEnd);
     },
 
+
     pasteClipboard: function () {
-        if (liberator.has("Windows")) {
-            this.executeCommand("cmd_paste");
-            return;
-        }
 
-        // FIXME: #93 (<s-insert> in the bottom of a long textarea bounces up)
-        let elem = liberator.focus;
-
-        if (elem.setSelectionRange && util.readFromClipboard()) {
-            // readFromClipboard would return 'undefined' if not checked
-            // dunno about .setSelectionRange
-            // This is a hacky fix - but it works.
-            let curTop = elem.scrollTop;
-            let curLeft = elem.scrollLeft;
-
-            let rangeStart = elem.selectionStart; // caret position
-            let rangeEnd = elem.selectionEnd;
-            let tempStr1 = elem.value.substring(0, rangeStart);
-            let tempStr2 = util.readFromClipboard();
-            let tempStr3 = elem.value.substring(rangeEnd);
-            elem.value = tempStr1 + tempStr2 + tempStr3;
-            elem.selectionStart = rangeStart + tempStr2.length;
-            elem.selectionEnd = elem.selectionStart;
-
-            elem.scrollTop = curTop;
-            elem.scrollLeft = curLeft;
-        }
+            if (!liberator.has("Unix")) {
+                this.executeCommand("cmd_paste");
+                return;
+            }
+    
+            let elem = liberator.focus;
+    
+            if (elem.setSelectionRange && util.readFromClipboard()) {
+                // readFromClipboard would return 'undefined' if not checked
+                // dunno about .setSelectionRange
+                // This is a hacky fix - but it works.
+                let curTop = elem.scrollTop;
+                let curLeft = elem.scrollLeft;
+    
+                let rangeStart = elem.selectionStart; // caret position
+                let rangeEnd = elem.selectionEnd;
+                let tempStr1 = elem.value.substring(0, rangeStart);
+                let tempStr2 = util.readFromClipboard();
+                elem.value = tempStr1 + tempStr2;
+                elem.selectionStart = rangeStart + tempStr2.length;
+                elem.selectionEnd = elem.selectionStart;
+    
+                elem.scrollTop = curTop;
+                elem.scrollLeft = curLeft;
+            }
     },
 
     // count is optional, defaults to 1
@@ -447,12 +447,21 @@ const Editor = Module("editor", {
         let textbox   = Editor.getEditor();
         if (!textbox)
             return false;
-        let text      = textbox.value;
+        let text      = '';
+        let currStart = 0;
+        let currEnd   = 0;
+        if (textbox instanceof Window) {
+            text = textbox.getSelection().getRangeAt(0).startContainer.data;
+            currStart = textbox.getSelection().getRangeAt(0).startOffset;
+            currEnd = textbox.getSelection().getRangeAt(0).endOffset;
+        } else {
+            text = textbox.value;
+            currStart = textbox.selectionStart;
+            currEnd = textbox.selectionEnd;
+        }
         if (typeof text !== "string")
             return false;
 
-        let currStart = textbox.selectionStart;
-        let currEnd   = textbox.selectionEnd;
         let foundWord = text.substring(0, currStart).replace(/.*[\s\n]/gm, '').match(RegExp('(' + abbreviations._match + ')$'));
         if (!foundWord)
             return true;
@@ -462,10 +471,20 @@ const Editor = Module("editor", {
         if (abbrev) {
             let len = foundWord.length;
             let abbrText = abbrev.text;
-            text = text.substring(0, currStart - len) + abbrText + text.substring(currStart);
-            textbox.value = text;
-            textbox.selectionStart = currStart - len + abbrText.length;
-            textbox.selectionEnd   = currEnd   - len + abbrText.length;
+            if (textbox instanceof Window) {
+                let r = textbox.getSelection().getRangeAt(0);
+                r.setStart(r.startContainer, currStart - len);
+                r.deleteContents();
+                let textNode = document.createTextNode(abbrText);
+                r.insertNode(textNode);
+                r.selectNodeContents(textNode);
+                textbox.getSelection().collapseToEnd();
+            } else {
+                text = text.substring(0, currStart - len) + abbrText + text.substring(currStart);
+                textbox.value = text;
+                textbox.selectionStart = currStart - len + abbrText.length;
+                textbox.selectionEnd   = currEnd   - len + abbrText.length;
+            }
         }
 
         return true;
@@ -672,7 +691,7 @@ const Editor = Module("editor", {
             function () { editor.executeCommand("cmd_moveBottom", 1); });*/
 
         mappings.add(myModes,
-            ["<S-Insert>"], "Insert clipboard/selection",
+            ["<S-Insert>"], "Paste from clipboard/selection",
             function () { editor.pasteClipboard(); });
 
         mappings.add(modes.getCharModes("i"),
